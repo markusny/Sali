@@ -217,6 +217,7 @@ let state = load() || {
   weekDone:{t1:false,t2:false},
   logs:[]                     // {date, ts, week, block, t, id, n, kg, reps, sets, side, pair, unit}
 };
+if(!state.finished) state.finished={t1:null,t2:null};
 let openInfo = {};
 const $ = s => document.querySelector(s);
 const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -261,8 +262,11 @@ function render(){
   $("#pbar").style.width = (total?done/total*100:0)+"%";
   const dl = state.week===WEEKS ? " · kevennysviikko" : state.week===7 ? " · raskas viikko" : "";
   $("#ptext").textContent = `${done}/${total} liikettä tehty${dl}${state.weekDone[t]?" · tehty jo tällä viikolla":""}`;
-  const p = state.prog[t];
-  let h = `<h2>Lämmittely</h2>`;
+  const p = state.prog[t], fin = state.finished[t];
+  $("#finishBtn").textContent = fin ? "Päivitä tallennus" : "Treeni valmis ✓";
+  $("#resetBtn").textContent = fin ? "Aloita uusi kerta" : "Tyhjennä";
+  let h = fin ? `<div class="card done" style="margin-top:4px"><div class="row" style="align-items:center"><div class="name">✓ Treeni tallennettu ${esc(fin.date)}<br><span class="sub">Merkinnät pysyvät näkyvissä. Muutokset saa talteen "Päivitä tallennus" -napilla.</span></div><button class="rbtn" id="undoFinish">Peru</button></div></div>` : "";
+  h += `<h2>Lämmittely</h2>`;
   p.warmup.forEach((x,i)=>h+=simpleCard(t,"w"+i,x));
   h += `<h2>Lämmittelykierto</h2><div class="round">Kierrokset:
      ${state.rounds[t].map((on,i)=>`<button class="rbtn ${on?"on":""}" data-round="${i}">${i+1}. kierros${on?" ✓":""}</button>`).join("")}</div>`;
@@ -431,7 +435,7 @@ function openEdit(i){
 function closeModal(){ $("#modal").classList.remove("open"); }
 $("#modal").addEventListener("click", e=>{ if(e.target.id==="modal") closeModal(); });
 function findEx(idv){ for(const t of ["t1","t2"]) for(const ex of state.prog[t].main) if(ex.id===idv) return ex; }
-function setWeek(w){ state.week=Math.max(1,Math.min(WEEKS,w)); state.weekDone={t1:false,t2:false}; state.cur={t1:{},t2:{}}; save(); render(); }
+function setWeek(w){ state.week=Math.max(1,Math.min(WEEKS,w)); state.weekDone={t1:false,t2:false}; state.cur={t1:{},t2:{}}; state.done={t1:{},t2:{}}; state.rounds={t1:[false,false],t2:[false,false]}; state.finished={t1:null,t2:null}; save(); render(); }
 
 /* ---------- tapahtumat ---------- */
 document.addEventListener("click", e=>{
@@ -452,18 +456,26 @@ document.addEventListener("click", e=>{
   if (b.dataset.allsets){ const ex=state.prog[t].main[+b.dataset.allsets]; const n=plan(ex,state.week).sets;
     state.done[t][ex.id] = isDone(t,ex.id,ex) ? [] : Array(n).fill(true); save(); render(); return; }
   if (b.id==="addEx"){ openEdit(null); return; }
-  if (b.id==="resetBtn"){ state.done[t]={}; state.rounds[t]=[false,false]; state.cur[t]={}; save(); render(); toast("Merkinnät tyhjennetty"); return; }
+  if (b.id==="resetBtn"){ const wasDone=!!state.finished[t]; state.done[t]={}; state.rounds[t]=[false,false]; state.cur[t]={}; state.finished[t]=null; save(); render(); window.scrollTo(0,0); toast(wasDone?"Uusi treenikerta aloitettu":"Merkinnät tyhjennetty"); return; }
+  if (b.id==="undoFinish"){
+    const f=state.finished[t]; if(!f) return;
+    state.logs=state.logs.filter(l=>!(l.ts===f.ts && l.t===t));
+    state.finished[t]=null; state.weekDone[t]=false;
+    save(); render(); toast("Tallennus peruttu – merkinnät säilyivät"); return;
+  }
   if (b.id==="finishBtn"){
-    const d=new Date(), ts=d.getTime(), date=`${d.getDate()}.${d.getMonth()+1}.`;
-    let n=0;
+    const prev=state.finished[t];
+    const d=new Date(), ts=prev?prev.ts:d.getTime(), date=prev?prev.date:`${d.getDate()}.${d.getMonth()+1}.`;
+    const newLogs=[]; let n=0;
     state.prog[t].main.forEach(ex=>{
       const sets = setsArr(t,ex.id).filter(Boolean).length; if(!sets) return;
       const a=actual(t,ex); n++;
-      state.logs.push({date, ts, week:state.week, block:state.block, t, id:ex.id, n:ex.n, kg:a.kg===""?"":+String(a.kg).replace(",","."), reps:+a.reps||0, sets});
+      newLogs.push({date, ts, week:state.week, block:state.block, t, id:ex.id, n:ex.n, kg:a.kg===""?"":+String(a.kg).replace(",","."), reps:+a.reps||0, sets});
     });
     if(!n){ toast("Merkitse ensin tehdyt sarjat"); return; }
-    state.weekDone[t]=true; state.done[t]={}; state.rounds[t]=[false,false]; state.cur[t]={};
-    save(); render(); window.scrollTo(0,0); toast(`Tallennettu: ${n} liikettä 💪`);
+    state.logs=state.logs.filter(l=>!(l.ts===ts && l.t===t)).concat(newLogs);
+    state.weekDone[t]=true; state.finished[t]={ts,date};
+    save(); render(); window.scrollTo(0,0); toast(prev?"Tallennus päivitetty":`Tallennettu: ${n} liikettä 💪`);
     uploadSessions(groupLogs(state.logs.filter(l=>l.ts===ts)));
     return;
   }
